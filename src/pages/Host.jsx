@@ -37,6 +37,41 @@ const Host = () => {
             setConnectionStatus(`Client connected to room: ${data.room}`)
             setClientConnected(true)
         })
+        // Add this to your existing useEffect socket listeners
+        socket.on("control-event", (event) => {
+            if (!window.electronAPI) return;
+
+            // Get screen scale factor for high DPI displays
+            const scaleFactor = window.electronAPI.getScreenScaleFactor();
+
+            // Convert relative coordinates to actual screen coordinates
+            const actualX = event.x * scaleFactor;
+            const actualY = event.y * scaleFactor;
+
+            switch (event.type) {
+                case 'mouse-move':
+                    window.electronAPI.sendInputEvent({
+                        type: 'mouseMove',
+                        x: actualX,
+                        y: actualY
+                    });
+                    // Broadcast cursor position to client
+                    socket.emit("cursor-position", {
+                        x: event.x,
+                        y: event.y,
+                        code
+                    });
+                    break;
+
+                case 'mouse-click':
+                    window.electronAPI.sendInputEvent({
+                        type: event.button === 2 ? 'mouseDownRight' : 'mouseDown',
+                        x: actualX,
+                        y: actualY
+                    });
+                    break;
+            }
+        });
 
         // Listen for client disconnection
         socket.on("client-disconnected", (data) => {
