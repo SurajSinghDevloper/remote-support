@@ -38,7 +38,7 @@ function Login() {
                     setError(res.data.message || "Registration failed")
                 }
             } else {
-                const res = await axios.post(`${apiUrl} / connect`, { code, pin })
+                const res = await axios.post(`${apiUrl}/connect`, { code, pin })
                 if (res.data.success) {
                     navigate(`/client/${code}`)
                 } else {
