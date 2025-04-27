@@ -1,0 +1,90 @@
+{
+  "name": "remote-support-app",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "@tailwindcss/postcss": "^4.1.4",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^13.5.0",
+    "assert": "^2.1.0",
+    "axios": "^1.9.0",
+    "http-browserify": "^1.7.0",
+    "https-browserify": "^1.0.0",
+    "path-browserify": "^1.0.1",
+    "postcss": "^8.5.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.5.2",
+    "react-scripts": "5.0.1",
+    "socket.io-client": "^4.8.1",
+    "stream-browserify": "^3.0.0",
+    "stream-http": "^3.2.0",
+    "url": "^0.11.4",
+    "web-vitals": "^2.1.4"
+  },
+  "main": "main.js",
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "electron": "electron .",
+    "electron-dev": "ELECTRON_DISABLE_SECURITY_WARNINGS=true NODE_ENV=development electron .",
+    "package": "electron-builder",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^35.2.1",
+    "electron-builder": "^26.0.12",
+    "electron-is-dev": "^3.0.1",
+    "electron-rebuild": "^3.2.9",
+    "tailwindcss": "^3.4.17"
+  },
+  "build": {
+    "appId": "com.ssb.remote-support-app",
+    "productName": "Remote Support App",
+    "files": [
+      "build/**/*",
+      "main.js",
+      "public/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "public/icons/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/icons/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "public/icons/icon.png"
+    }
+  }
+}
