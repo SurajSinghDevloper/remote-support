@@ -317,6 +317,7 @@
 
 // export default Host
 
+// host.jsx
 "use client"
 
 import { useEffect, useRef, useState } from "react"
@@ -339,6 +340,11 @@ const Host = () => {
     const [framesSent, setFramesSent] = useState(0)
     const [framesAcknowledged, setFramesAcknowledged] = useState(0)
     const [screenSize, setScreenSize] = useState({ width: 1280, height: 720 })
+    const [debugLog, setDebugLog] = useState([])
+
+    const addDebugLog = (message) => {
+        setDebugLog(prev => [...prev.slice(-9), message].filter(Boolean))
+    }
 
     useEffect(() => {
         // Join a room when Host component mounts
@@ -356,61 +362,79 @@ const Host = () => {
             console.log("Client connected:", data)
             setConnectionStatus(`Client connected to room: ${data.room}`)
             setClientConnected(true)
+            addDebugLog(`Client connected: ${data.clientId}`)
         })
 
-        // Listen for control events from client
-        socket.on("control-event", (event) => {
+        // Listen for mouse move events
+        socket.on("mouse-move", (data) => {
             if (!window.electronAPI) {
-                console.log("Electron API not available, control events will not work")
+                addDebugLog("Electron API not available")
                 return
             }
 
             try {
-                // Get screen dimensions for scaling
-                const { width, height } = screenSize
+                addDebugLog(`Mouse move: ${data.x},${data.y}`)
+                window.electronAPI.sendMouseMove({
+                    x: data.x,
+                    y: data.y,
+                    screenWidth: screenSize.width,
+                    screenHeight: screenSize.height
+                })
 
-                switch (event.type) {
-                    case "mouse-move":
-                        window.electronAPI.sendMouseMove({
-                            x: event.x,
-                            y: event.y,
-                            screenWidth: width,
-                            screenHeight: height,
-                        })
-
-                        // Send cursor position back to client for visual feedback
-                        socket.emit("cursor-position", {
-                            x: event.x,
-                            y: event.y,
-                            code,
-                        })
-                        break
-
-                    case "mouse-click":
-                        window.electronAPI.sendMouseClick({
-                            x: event.x,
-                            y: event.y,
-                            button: event.button || 0,
-                            screenWidth: width,
-                            screenHeight: height,
-                        })
-                        break
-
-                    case "key-down":
-                    case "key-up":
-                        window.electronAPI.sendKeyPress({
-                            key: event.key,
-                            keyCode: event.keyCode,
-                            type: event.type,
-                            shift: event.shift,
-                            alt: event.alt,
-                            ctrl: event.ctrl,
-                            meta: event.meta,
-                        })
-                        break
-                }
+                // Send cursor position back to client for visual feedback
+                socket.emit("cursor-position", {
+                    x: data.x,
+                    y: data.y,
+                    code
+                })
             } catch (err) {
-                console.error("Error processing control event:", err)
+                console.error("Error processing mouse move:", err)
+                addDebugLog(`Mouse move error: ${err.message}`)
+            }
+        })
+
+        // Listen for mouse click events
+        socket.on("mouse-click", (data) => {
+            if (!window.electronAPI) {
+                addDebugLog("Electron API not available")
+                return
+            }
+
+            try {
+                addDebugLog(`Mouse click: ${data.button} at ${data.x},${data.y}`)
+                window.electronAPI.sendMouseClick({
+                    x: data.x,
+                    y: data.y,
+                    button: data.button || 0,
+                    screenWidth: screenSize.width,
+                    screenHeight: screenSize.height
+                })
+            } catch (err) {
+                console.error("Error processing mouse click:", err)
+                addDebugLog(`Mouse click error: ${err.message}`)
+            }
+        })
+
+        // Listen for key press events
+        socket.on("key-press", (data) => {
+            if (!window.electronAPI) {
+                addDebugLog("Electron API not available")
+                return
+            }
+
+            try {
+                addDebugLog(`Key ${data.type}: ${data.key}`)
+                window.electronAPI.sendKeyPress({
+                    key: data.key,
+                    type: data.type,
+                    shift: data.shift,
+                    alt: data.alt,
+                    ctrl: data.ctrl,
+                    meta: data.meta
+                })
+            } catch (err) {
+                console.error("Error processing key press:", err)
+                addDebugLog(`Key press error: ${err.message}`)
             }
         })
 
@@ -419,6 +443,7 @@ const Host = () => {
             console.log("Client disconnected:", data)
             setConnectionStatus(`Client disconnected from room: ${data.room}`)
             setClientConnected(false)
+            addDebugLog(`Client disconnected: ${data.clientId}`)
         })
 
         // Listen for acknowledgements of received screen data
@@ -435,18 +460,17 @@ const Host = () => {
             stopSharing()
         })
 
-        // Listen for cursor position updates from Electron main process
-        const handleCursorUpdate = (e) => {
-            if (clientConnected) {
-                socket.emit("cursor-position", {
-                    x: e.detail.x,
-                    y: e.detail.y,
-                    code,
-                })
-            }
+        // Get screen size if available
+        if (window?.electronAPI?.getScreenSize) {
+            window.electronAPI.getScreenSize().then(size => {
+                if (size && size.width && size.height) {
+                    setScreenSize(size)
+                    addDebugLog(`Screen size: ${size.width}x${size.height}`)
+                }
+            }).catch(err => {
+                console.error("Error getting screen size:", err)
+            })
         }
-
-        window.addEventListener("cursor-position-update", handleCursorUpdate)
 
         return () => {
             stopSharing()
@@ -455,10 +479,11 @@ const Host = () => {
             socket.off("client-disconnected")
             socket.off("screen-data-received")
             socket.off("room-expired")
-            socket.off("control-event")
-            window.removeEventListener("cursor-position-update", handleCursorUpdate)
+            socket.off("mouse-move")
+            socket.off("mouse-click")
+            socket.off("key-press")
         }
-    }, [code, screenSize, clientConnected])
+    }, [code])
 
     const startScreenShare = async () => {
         try {
@@ -474,14 +499,7 @@ const Host = () => {
 
                 const selectedSource = sources[0]
                 console.log("Selected source:", selectedSource)
-
-                // Get screen dimensions if available
-                if (window.electronAPI.getScreenSize) {
-                    const size = await window.electronAPI.getScreenSize()
-                    if (size && size.width && size.height) {
-                        setScreenSize(size)
-                    }
-                }
+                addDebugLog(`Selected source: ${selectedSource.name}`)
 
                 const stream = await navigator.mediaDevices.getUserMedia({
                     audio: false,
@@ -513,18 +531,6 @@ const Host = () => {
                     audio: false,
                 })
 
-                // Try to get screen dimensions from video track settings
-                const videoTrack = stream.getVideoTracks()[0]
-                if (videoTrack) {
-                    const settings = videoTrack.getSettings()
-                    if (settings.width && settings.height) {
-                        setScreenSize({
-                            width: settings.width,
-                            height: settings.height,
-                        })
-                    }
-                }
-
                 setupStream(stream)
             }
 
@@ -532,6 +538,7 @@ const Host = () => {
         } catch (err) {
             console.error("Screen share error:", err)
             setError(err.message)
+            addDebugLog(`Screen share error: ${err.message}`)
             stopSharing()
         }
     }
@@ -571,10 +578,10 @@ const Host = () => {
                         })
 
                         setFramesSent((prev) => prev + 1)
-                        console.log(`Sent frame ${frameId} at ${new Date().toLocaleTimeString()}`)
                     }
                 } catch (err) {
                     console.error("Error capturing screen:", err)
+                    addDebugLog(`Screen capture error: ${err.message}`)
                 }
             }
         }, interval)
@@ -676,7 +683,17 @@ const Host = () => {
                     <canvas ref={canvasRef} style={{ display: "none" }} />
                 </div>
 
-                <div className="mt-6 p-4 bg-gray-100 rounded-md">
+                {/* Debug log */}
+                <div className="mt-4 p-3 bg-gray-100 rounded-md">
+                    <h3 className="text-sm font-medium mb-2">Debug Log:</h3>
+                    <div className="text-xs font-mono bg-black text-green-400 p-2 rounded h-32 overflow-y-auto">
+                        {debugLog.map((log, i) => (
+                            <div key={i}>{log}</div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="mt-4 p-4 bg-gray-100 rounded-md">
                     <h3 className="text-lg font-medium mb-2">Instructions:</h3>
                     <ul className="list-disc pl-5 space-y-1">
                         <li>Click "Start Sharing" to begin sharing your screen</li>

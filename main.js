@@ -218,6 +218,7 @@
 // })
 
 
+// main.js
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen } = require("electron")
 const path = require("path")
 const isDev = require("electron-is-dev")
@@ -271,13 +272,15 @@ async function createWindow() {
             return {
                 width: primaryDisplay.size.width,
                 height: primaryDisplay.size.height,
-                scaleFactor: primaryDisplay.scaleFactor,
+                scaleFactor: primaryDisplay.scaleFactor
             }
         })
 
         // Mouse movement handler
         ipcMain.on("mouse-move", async (_, data) => {
             try {
+                console.log("Mouse move:", data)
+
                 // Scale coordinates to actual screen size
                 const { x, y, screenWidth, screenHeight } = data
                 const primaryDisplay = screen.getPrimaryDisplay()
@@ -290,19 +293,16 @@ async function createWindow() {
 
                 // Move the mouse to the calculated position
                 await mouse.move(new Point(scaledX, scaledY))
-
-                // Send cursor position back to renderer for visual feedback
-                if (mainWindow) {
-                    mainWindow.webContents.send("cursor-position-update", { x, y })
-                }
             } catch (error) {
-                console.error("Mouse move error:", error)
+                console.error("Error moving mouse:", error)
             }
         })
 
         // Mouse click handler
         ipcMain.on("mouse-click", async (_, data) => {
             try {
+                console.log("Mouse click:", data)
+
                 // Scale coordinates to actual screen size
                 const { x, y, button, screenWidth, screenHeight } = data
                 const primaryDisplay = screen.getPrimaryDisplay()
@@ -323,17 +323,18 @@ async function createWindow() {
                     await mouse.click(Button.LEFT)
                 }
             } catch (error) {
-                console.error("Mouse click error:", error)
+                console.error("Error clicking mouse:", error)
             }
         })
 
         // Keyboard event handler
         ipcMain.on("key-press", async (_, data) => {
             try {
+                console.log("Key press:", data)
                 const { key, type } = data
 
                 // Handle key press
-                if (type === "key-down") {
+                if (type === "down") {
                     // For special keys like Enter, Escape, etc.
                     if (key.length > 1) {
                         switch (key) {

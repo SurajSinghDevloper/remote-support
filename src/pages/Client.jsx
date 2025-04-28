@@ -234,6 +234,7 @@
 // export default Client
 
 
+// client.jsx
 "use client"
 
 import { useEffect, useRef, useState } from "react"
@@ -249,9 +250,8 @@ function Client() {
     const [frameCount, setFrameCount] = useState(0)
     const [hostConnected, setHostConnected] = useState(false)
     const [connectionQuality, setConnectionQuality] = useState("Unknown")
-    const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 })
-    const [showCursor, setShowCursor] = useState(false)
     const cursorRef = useRef(null)
+    const canvasFocused = useRef(false)
 
     // Create image with crossOrigin set to anonymous to avoid CORS issues
     const imgRef = useRef(null)
@@ -285,8 +285,7 @@ function Client() {
             cursor.style.position = "absolute"
             cursor.style.width = "20px"
             cursor.style.height = "20px"
-            cursor.style.backgroundImage =
-                "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23000000' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'%3E%3Cpath d='M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z'/%3E%3C/svg%3E\")"
+            cursor.style.backgroundImage = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23000000' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'%3E%3Cpath d='M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z'/%3E%3C/svg%3E\")"
             cursor.style.backgroundSize = "contain"
             cursor.style.backgroundRepeat = "no-repeat"
             cursor.style.pointerEvents = "none"
@@ -318,7 +317,6 @@ function Client() {
             console.log("Host disconnected:", data)
             setConnectionStatus(`Host disconnected from room: ${data.room}`)
             setHostConnected(false)
-            setShowCursor(false)
 
             // Show disconnection message on canvas
             const canvas = canvasRef.current
@@ -333,20 +331,11 @@ function Client() {
             }
         })
 
-        // Listen for cursor position updates from host
-        socket.on("cursor-position", (data) => {
-            if (cursorRef.current) {
-                setCursorPosition({ x: data.x, y: data.y })
-                setShowCursor(true)
-            }
-        })
-
         // Listen for room expiration
         socket.on("room-expired", (data) => {
             console.log("Room expired:", data)
             setConnectionStatus("Room expired due to inactivity")
             setHostConnected(false)
-            setShowCursor(false)
         })
 
         // Event listener for receiving screen data
@@ -410,6 +399,20 @@ function Client() {
         // Listen for 'screen-data' event
         socket.on("screen-data", handleScreenData)
 
+        // Listen for cursor position updates
+        socket.on("cursor-position", (data) => {
+            if (cursorRef.current && canvasRef.current) {
+                const canvas = canvasRef.current
+                const rect = canvas.getBoundingClientRect()
+                const scaleX = rect.width / canvas.width
+                const scaleY = rect.height / canvas.height
+
+                cursorRef.current.style.left = `${rect.left + data.x * scaleX}px`
+                cursorRef.current.style.top = `${rect.top + data.y * scaleY}px`
+                cursorRef.current.style.display = 'block'
+            }
+        })
+
         // Cleanup socket listener on unmount
         return () => {
             socket.off("room-joined")
@@ -426,24 +429,6 @@ function Client() {
             }
         }
     }, [code])
-
-    // Update cursor position when it changes
-    useEffect(() => {
-        if (cursorRef.current && showCursor) {
-            const canvas = canvasRef.current
-            if (canvas) {
-                const rect = canvas.getBoundingClientRect()
-                const scaleX = rect.width / canvas.width
-                const scaleY = rect.height / canvas.height
-
-                cursorRef.current.style.left = `${rect.left + cursorPosition.x * scaleX}px`
-                cursorRef.current.style.top = `${rect.top + cursorPosition.y * scaleY}px`
-                cursorRef.current.style.display = "block"
-            }
-        } else if (cursorRef.current) {
-            cursorRef.current.style.display = "none"
-        }
-    }, [cursorPosition, showCursor])
 
     const calculateMousePosition = (e) => {
         const canvas = canvasRef.current
@@ -463,61 +448,77 @@ function Client() {
         if (!hostConnected) return
 
         const position = calculateMousePosition(e)
-        socket.emit("control-event", {
+        socket.emit("mouse-move", {
             code,
-            type: "mouse-move",
             x: position.x,
-            y: position.y,
+            y: position.y
         })
     }
 
     const handleMouseClick = (e) => {
         if (!hostConnected) return
+        e.preventDefault()
 
         const position = calculateMousePosition(e)
-        socket.emit("control-event", {
+        socket.emit("mouse-click", {
             code,
-            type: "mouse-click",
             button: e.button, // 0 for left, 2 for right
             x: position.x,
-            y: position.y,
+            y: position.y
         })
     }
 
     const handleKeyDown = (e) => {
-        if (!hostConnected) return
+        if (!hostConnected || !canvasFocused.current) return
 
         // Prevent default browser actions for certain keys
         if (["F5", "F11", "Tab"].includes(e.key)) {
             e.preventDefault()
         }
 
-        socket.emit("control-event", {
+        socket.emit("key-press", {
             code,
-            type: "key-down",
             key: e.key,
-            keyCode: e.keyCode,
+            type: "down",
             shift: e.shiftKey,
             alt: e.altKey,
             ctrl: e.ctrlKey,
-            meta: e.metaKey,
+            meta: e.metaKey
         })
     }
 
     const handleKeyUp = (e) => {
-        if (!hostConnected) return
+        if (!hostConnected || !canvasFocused.current) return
 
-        socket.emit("control-event", {
+        socket.emit("key-press", {
             code,
-            type: "key-up",
             key: e.key,
-            keyCode: e.keyCode,
+            type: "up",
             shift: e.shiftKey,
             alt: e.altKey,
             ctrl: e.ctrlKey,
-            meta: e.metaKey,
+            meta: e.metaKey
         })
     }
+
+    const handleCanvasFocus = () => {
+        canvasFocused.current = true
+    }
+
+    const handleCanvasBlur = () => {
+        canvasFocused.current = false
+    }
+
+    useEffect(() => {
+        // Add global keyboard event listeners
+        window.addEventListener('keydown', handleKeyDown)
+        window.addEventListener('keyup', handleKeyUp)
+
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown)
+            window.removeEventListener('keyup', handleKeyUp)
+        }
+    }, [hostConnected])
 
     return (
         <div className="p-6 max-w-6xl mx-auto">
@@ -551,8 +552,8 @@ function Client() {
                             handleMouseClick({ ...e, button: 2 })
                         }}
                         tabIndex={0}
-                        onKeyDown={handleKeyDown}
-                        onKeyUp={handleKeyUp}
+                        onFocus={handleCanvasFocus}
+                        onBlur={handleCanvasBlur}
                     />
                 </div>
 
