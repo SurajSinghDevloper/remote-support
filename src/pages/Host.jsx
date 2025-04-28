@@ -9,34 +9,36 @@ function Host() {
     const videoRef = useRef(null)
     const canvasRef = useRef(null)
     const streamRef = useRef(null)
-    const intervalRef = useRef(null)
+    const captureIntervalRef = useRef(null)
     const [error, setError] = useState(null)
     const [isSharing, setIsSharing] = useState(false)
     const [connectionStatus, setConnectionStatus] = useState("Connecting...")
-    const [quality, setQuality] = useState(0.5) // Default quality
-    const [frameRate, setFrameRate] = useState(3) // Default 3 FPS
+    const [quality, setQuality] = useState(0.6) // Default quality
+    const [frameRate, setFrameRate] = useState(5) // Default 5 FPS
     const [clientConnected, setClientConnected] = useState(false)
     const [lastSentTime, setLastSentTime] = useState(null)
     const [framesSent, setFramesSent] = useState(0)
     const [framesAcknowledged, setFramesAcknowledged] = useState(0)
     const [screenSize, setScreenSize] = useState({ width: 1280, height: 720 })
     const [debugLog, setDebugLog] = useState([])
-    const [networkStats, setNetworkStats] = useState({
-        latency: 0,
-        bandwidth: 0,
-        quality: "Unknown",
+    const [controlEvents, setControlEvents] = useState({
+        mouse: 0,
+        keyboard: 0,
+        clicks: 0,
+        scrolls: 0,
     })
 
-    // Performance monitoring
-    const performanceRef = useRef({
+    // Performance metrics
+    const perfMetrics = useRef({
         lastFrameTime: Date.now(),
         frameTimings: [],
         bytesSent: 0,
-        lastBytesCalc: Date.now(),
+        lastStatsCalc: Date.now(),
     })
 
+    // Add to debug log
     const addDebugLog = (message) => {
-        setDebugLog((prev) => [...prev.slice(-9), message].filter(Boolean))
+        setDebugLog((prev) => [...prev.slice(-9), `${new Date().toLocaleTimeString()}: ${message}`])
     }
 
     useEffect(() => {
@@ -47,14 +49,14 @@ function Host() {
         socketClient.joinRoom(code, "host")
         console.log(`Host joining room: ${code}`)
 
-        // Listen for room join confirmation on control channel
-        socketClient.onControl("room-joined", (data) => {
+        // Listen for room join confirmation
+        socketClient.on("room-joined", (data) => {
             setConnectionStatus(`Connected as host. Room: ${data.room}`)
             console.log("Room joined:", data)
         })
 
         // Listen for client connection
-        socketClient.onControl("client-connected", (data) => {
+        socketClient.on("client-connected", (data) => {
             console.log("Client connected:", data)
             setConnectionStatus(`Client connected to room: ${data.room}`)
             setClientConnected(true)
@@ -62,29 +64,23 @@ function Host() {
 
             // Send screen size to client
             if (screenSize.width && screenSize.height) {
-                socketClient.emitControl("screen-size", {
+                socketClient.emit("screen-size", {
                     code,
                     width: screenSize.width,
                     height: screenSize.height,
                 })
             }
-
-            // Send quality settings
-            socketClient.emitControl("quality-settings", {
-                code,
-                quality,
-                frameRate,
-            })
         })
 
-        // Listen for mouse move events
-        socketClient.onControl("mouse-move", (data) => {
+        // Listen for mouse move events - high priority
+        socketClient.on("mouse-move", (data) => {
             if (!window.electronAPI) {
                 addDebugLog("Electron API not available")
                 return
             }
 
             try {
+                // Send to electron for native mouse movement
                 window.electronAPI.sendMouseMove({
                     x: data.x,
                     y: data.y,
@@ -93,19 +89,25 @@ function Host() {
                 })
 
                 // Send cursor position back to client for visual feedback
-                socketClient.emitControl("cursor-position", {
+                socketClient.emitVolatile("cursor-position", {
                     x: data.x,
                     y: data.y,
                     code,
                 })
+
+                // Update control events counter
+                setControlEvents((prev) => ({
+                    ...prev,
+                    mouse: prev.mouse + 1,
+                }))
             } catch (err) {
                 console.error("Error processing mouse move:", err)
-                addDebugLog(`Mouse move error: ${err.message}`)
+                addDebugLog(`Mouse error: ${err.message}`)
             }
         })
 
         // Listen for mouse click events
-        socketClient.onControl("mouse-click", (data) => {
+        socketClient.on("mouse-click", (data) => {
             if (!window.electronAPI) {
                 addDebugLog("Electron API not available")
                 return
@@ -120,14 +122,66 @@ function Host() {
                     screenWidth: screenSize.width,
                     screenHeight: screenSize.height,
                 })
+
+                // Update control events counter
+                setControlEvents((prev) => ({
+                    ...prev,
+                    clicks: prev.clicks + 1,
+                }))
             } catch (err) {
                 console.error("Error processing mouse click:", err)
-                addDebugLog(`Mouse click error: ${err.message}`)
+                addDebugLog(`Click error: ${err.message}`)
+            }
+        })
+
+        // Listen for mouse double click events
+        socketClient.on("mouse-double-click", (data) => {
+            if (!window.electronAPI) {
+                addDebugLog("Electron API not available")
+                return
+            }
+
+            try {
+                addDebugLog(`Double click at ${data.x},${data.y}`)
+                window.electronAPI.sendMouseDoubleClick({
+                    x: data.x,
+                    y: data.y,
+                    screenWidth: screenSize.width,
+                    screenHeight: screenSize.height,
+                })
+            } catch (err) {
+                console.error("Error processing double click:", err)
+                addDebugLog(`Double click error: ${err.message}`)
+            }
+        })
+
+        // Listen for mouse scroll events
+        socketClient.on("mouse-scroll", (data) => {
+            if (!window.electronAPI) {
+                addDebugLog("Electron API not available")
+                return
+            }
+
+            try {
+                window.electronAPI.sendMouseScroll({
+                    deltaX: data.deltaX,
+                    deltaY: data.deltaY,
+                    deltaZ: data.deltaZ || 0,
+                })
+
+                // Update control events counter
+                setControlEvents((prev) => ({
+                    ...prev,
+                    scrolls: prev.scrolls + 1,
+                }))
+            } catch (err) {
+                console.error("Error processing scroll:", err)
+                addDebugLog(`Scroll error: ${err.message}`)
             }
         })
 
         // Listen for key press events
-        socketClient.onControl("key-press", (data) => {
+        socketClient.on("key-press", (data) => {
             if (!window.electronAPI) {
                 addDebugLog("Electron API not available")
                 return
@@ -137,20 +191,29 @@ function Host() {
                 addDebugLog(`Key ${data.type}: ${data.key}`)
                 window.electronAPI.sendKeyPress({
                     key: data.key,
+                    keyCode: data.keyCode,
                     type: data.type,
                     shift: data.shift,
                     alt: data.alt,
                     ctrl: data.ctrl,
                     meta: data.meta,
                 })
+
+                // Update control events counter for key down events
+                if (data.type === "down") {
+                    setControlEvents((prev) => ({
+                        ...prev,
+                        keyboard: prev.keyboard + 1,
+                    }))
+                }
             } catch (err) {
                 console.error("Error processing key press:", err)
-                addDebugLog(`Key press error: ${err.message}`)
+                addDebugLog(`Key error: ${err.message}`)
             }
         })
 
         // Listen for client disconnection
-        socketClient.onControl("client-disconnected", (data) => {
+        socketClient.on("client-disconnected", (data) => {
             console.log("Client disconnected:", data)
             setConnectionStatus(`Client disconnected from room: ${data.room}`)
             setClientConnected(false)
@@ -158,25 +221,23 @@ function Host() {
         })
 
         // Listen for acknowledgements of received screen data
-        socketClient.onScreen("screen-data-received", (data) => {
+        socketClient.on("screen-data-received", (data) => {
             const now = Date.now()
-            const latency = now - Number.parseInt(data.frameId, 10)
+            const frameId = Number.parseInt(data.frameId, 10)
+            const roundTripTime = now - frameId
 
-            // Update network stats
-            setNetworkStats((prev) => ({
-                ...prev,
-                latency: latency,
-            }))
+            addDebugLog(`Frame ${framesAcknowledged + 1} acknowledged (${roundTripTime}ms)`)
 
             setLastSentTime(new Date().toLocaleTimeString())
             setFramesAcknowledged((prev) => prev + 1)
         })
 
         // Listen for room expiration
-        socketClient.onControl("room-expired", (data) => {
+        socketClient.on("room-expired", (data) => {
             console.log("Room expired:", data)
             setConnectionStatus("Room expired due to inactivity")
             stopSharing()
+            addDebugLog("Room expired due to inactivity")
         })
 
         // Get screen size if available
@@ -190,7 +251,7 @@ function Host() {
 
                         // Send screen size to client if connected
                         if (clientConnected) {
-                            socketClient.emitControl("screen-size", {
+                            socketClient.emit("screen-size", {
                                 code,
                                 width: size.width,
                                 height: size.height,
@@ -200,44 +261,24 @@ function Host() {
                 })
                 .catch((err) => {
                     console.error("Error getting screen size:", err)
+                    addDebugLog(`Screen size error: ${err.message}`)
                 })
         }
 
-        // Set up network stats monitoring
+        // Calculate and display performance stats
         const statsInterval = setInterval(() => {
-            if (performanceRef.current.frameTimings.length > 0) {
-                const avgFrameTime =
-                    performanceRef.current.frameTimings.reduce((a, b) => a + b, 0) / performanceRef.current.frameTimings.length
+            const now = Date.now()
+            const elapsed = (now - perfMetrics.current.lastStatsCalc) / 1000 // seconds
+            const avgBandwidth = perfMetrics.current.bytesSent / elapsed / 1024 // KB/s
 
-                // Calculate bandwidth (bytes per second)
-                const now = Date.now()
-                const timeElapsed = (now - performanceRef.current.lastBytesCalc) / 1000 // in seconds
-                const bandwidth = performanceRef.current.bytesSent / timeElapsed
+            console.log(`Bandwidth: ${avgBandwidth.toFixed(2)} KB/s`)
 
-                // Reset for next calculation
-                performanceRef.current.bytesSent = 0
-                performanceRef.current.lastBytesCalc = now
+            // Reset counters
+            perfMetrics.current.bytesSent = 0
+            perfMetrics.current.lastStatsCalc = now
+        }, 5000)
 
-                // Determine connection quality
-                let quality = "Unknown"
-                if (avgFrameTime < 100) {
-                    quality = "Excellent"
-                } else if (avgFrameTime < 300) {
-                    quality = "Good"
-                } else if (avgFrameTime < 1000) {
-                    quality = "Fair"
-                } else {
-                    quality = "Poor"
-                }
-
-                setNetworkStats({
-                    latency: networkStats.latency,
-                    bandwidth: Math.round(bandwidth / 1024), // KB/s
-                    quality,
-                })
-            }
-        }, 2000)
-
+        // Cleanup on unmount
         return () => {
             stopSharing()
             socketClient.disconnect()
@@ -248,7 +289,7 @@ function Host() {
     // Effect to update quality settings when they change
     useEffect(() => {
         if (clientConnected) {
-            socketClient.emitControl("quality-settings", {
+            socketClient.emit("quality-settings", {
                 code,
                 quality,
                 frameRate,
@@ -310,7 +351,6 @@ function Host() {
             console.error("Screen share error:", err)
             setError(err.message)
             addDebugLog(`Screen share error: ${err.message}`)
-            stopSharing()
         }
     }
 
@@ -329,7 +369,7 @@ function Host() {
         // Calculate interval based on frame rate
         const interval = 1000 / frameRate
 
-        intervalRef.current = setInterval(() => {
+        captureIntervalRef.current = setInterval(() => {
             if (videoRef.current && canvasRef.current) {
                 try {
                     // Only send if a client is connected
@@ -344,21 +384,21 @@ function Host() {
                         const imageData = canvasRef.current.toDataURL("image/jpeg", quality)
 
                         // Track bytes sent for bandwidth calculation
-                        performanceRef.current.bytesSent += imageData.length
+                        perfMetrics.current.bytesSent += imageData.length
 
                         // Track frame timing
                         const now = Date.now()
-                        const timeSinceLastFrame = now - performanceRef.current.lastFrameTime
-                        performanceRef.current.lastFrameTime = now
+                        const timeSinceLastFrame = now - perfMetrics.current.lastFrameTime
+                        perfMetrics.current.lastFrameTime = now
 
                         // Keep only last 10 frame timings
-                        performanceRef.current.frameTimings.push(timeSinceLastFrame)
-                        if (performanceRef.current.frameTimings.length > 10) {
-                            performanceRef.current.frameTimings.shift()
+                        perfMetrics.current.frameTimings.push(timeSinceLastFrame)
+                        if (perfMetrics.current.frameTimings.length > 10) {
+                            perfMetrics.current.frameTimings.shift()
                         }
 
-                        // Send screen data through screen channel
-                        socketClient.emitScreen("screen-data", {
+                        // Send screen data
+                        socketClient.emit("screen-data", {
                             image: imageData,
                             code: code,
                             frameId: frameId,
@@ -376,28 +416,60 @@ function Host() {
     }
 
     const stopSharing = () => {
-        clearInterval(intervalRef.current)
+        clearInterval(captureIntervalRef.current)
+        captureIntervalRef.current = null
+
         if (streamRef.current) {
             streamRef.current.getTracks().forEach((track) => track.stop())
+            streamRef.current = null
         }
+
         if (videoRef.current) {
             videoRef.current.srcObject = null
         }
+
         setIsSharing(false)
+        addDebugLog("Screen sharing stopped")
     }
 
     const handleQualityChange = (e) => {
         setQuality(Number.parseFloat(e.target.value))
+        addDebugLog(`Quality set to: ${e.target.value}`)
     }
 
     const handleFrameRateChange = (e) => {
         const newFrameRate = Number.parseInt(e.target.value)
         setFrameRate(newFrameRate)
+        addDebugLog(`Frame rate set to: ${newFrameRate} FPS`)
 
         // Update the interval if sharing is active
-        if (isSharing) {
-            stopSharing()
-            startScreenShare()
+        if (isSharing && captureIntervalRef.current) {
+            clearInterval(captureIntervalRef.current)
+            const interval = 1000 / newFrameRate
+
+            captureIntervalRef.current = setInterval(() => {
+                if (videoRef.current && canvasRef.current && clientConnected) {
+                    try {
+                        const ctx = canvasRef.current.getContext("2d")
+                        ctx.drawImage(videoRef.current, 0, 0, screenSize.width, screenSize.height)
+
+                        const frameId = Date.now().toString()
+                        const imageData = canvasRef.current.toDataURL("image/jpeg", quality)
+
+                        socketClient.emit("screen-data", {
+                            image: imageData,
+                            code: code,
+                            frameId: frameId,
+                            timestamp: Date.now(),
+                        })
+
+                        setFramesSent((prev) => prev + 1)
+                        perfMetrics.current.bytesSent += imageData.length
+                    } catch (err) {
+                        console.error("Error capturing screen:", err)
+                    }
+                }
+            }, interval)
         }
     }
 
@@ -412,9 +484,13 @@ function Host() {
                         <p className="text-green-600">Last frame sent: {lastSentTime}</p>
                         <p className="text-green-600">Frames sent: {framesSent}</p>
                         <p className="text-green-600">Frames acknowledged: {framesAcknowledged}</p>
-                        <p className="text-green-600">Latency: {networkStats.latency}ms</p>
-                        <p className="text-green-600">Bandwidth: {networkStats.bandwidth} KB/s</p>
-                        <p className="text-green-600">Connection quality: {networkStats.quality}</p>
+                        <p className="text-green-600">Control events received:</p>
+                        <ul className="ml-5 list-disc text-green-600">
+                            <li>Mouse moves: {controlEvents.mouse}</li>
+                            <li>Clicks: {controlEvents.clicks}</li>
+                            <li>Key presses: {controlEvents.keyboard}</li>
+                            <li>Scroll events: {controlEvents.scrolls}</li>
+                        </ul>
                     </div>
                 )}
 
@@ -442,10 +518,10 @@ function Host() {
                         >
                             <option value="1">1 FPS (Lowest)</option>
                             <option value="2">2 FPS (Low)</option>
-                            <option value="3">3 FPS (Recommended)</option>
-                            <option value="5">5 FPS (Medium)</option>
+                            <option value="5">5 FPS (Recommended)</option>
                             <option value="10">10 FPS (High)</option>
-                            <option value="15">15 FPS (Highest)</option>
+                            <option value="15">15 FPS (Very High)</option>
+                            <option value="30">30 FPS (Maximum)</option>
                         </select>
                     </div>
                 </div>
@@ -491,6 +567,7 @@ function Host() {
                         <li>Click "Start Sharing" to begin sharing your screen</li>
                         <li>Adjust quality and frame rate for better performance</li>
                         <li>Lower quality and frame rate for slower connections</li>
+                        <li>Higher frame rate provides smoother control but uses more bandwidth</li>
                         <li>The client will be able to see and control your screen once connected</li>
                         <li>Click "Stop Sharing" to end the session</li>
                     </ul>

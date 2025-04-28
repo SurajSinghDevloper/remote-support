@@ -16,26 +16,24 @@ function Client() {
     const cursorRef = useRef(null)
     const canvasFocused = useRef(false)
     const [screenSize, setScreenSize] = useState({ width: 1280, height: 720 })
-    const [networkStats, setNetworkStats] = useState({
-        latency: 0,
-        fps: 0,
-        quality: "Unknown",
-    })
+    const [controlStats, setControlStats] = useState({ mouse: 0, keyboard: 0 })
 
-    // Performance monitoring
-    const performanceRef = useRef({
+    // Create image with crossOrigin set to anonymous to avoid CORS issues
+    const imgRef = useRef(new Image())
+
+    // Performance metrics
+    const perfMetrics = useRef({
         lastFrameTime: Date.now(),
         frameTimings: [],
         framesReceived: 0,
         lastFpsCalc: Date.now(),
     })
 
-    // Create image with crossOrigin set to anonymous to avoid CORS issues
-    const imgRef = useRef(null)
+    // Track key states to prevent key repeats
+    const keyStates = useRef({})
 
     useEffect(() => {
-        // Create a new image with crossOrigin set
-        imgRef.current = new Image()
+        // Set cross-origin for the image
         imgRef.current.crossOrigin = "anonymous"
 
         // Initialize canvas
@@ -65,6 +63,7 @@ function Client() {
             cursor.style.pointerEvents = "none"
             cursor.style.zIndex = "9999"
             cursor.style.transform = "translate(-50%, -50%)"
+            cursor.style.display = "none"
             document.body.appendChild(cursor)
             cursorRef.current = cursor
         }
@@ -77,20 +76,20 @@ function Client() {
         console.log(`Client joined room: ${code}`)
 
         // Listen for room join confirmation
-        socketClient.onControl("room-joined", (data) => {
+        socketClient.on("room-joined", (data) => {
             setConnectionStatus(`Connected to room: ${data.room}`)
             console.log("Room joined:", data)
         })
 
         // Listen for host connection
-        socketClient.onControl("host-connected", (data) => {
+        socketClient.on("host-connected", (data) => {
             console.log("Host connected:", data)
             setConnectionStatus(`Host connected to room: ${data.room}`)
             setHostConnected(true)
         })
 
         // Listen for host disconnection
-        socketClient.onControl("host-disconnected", (data) => {
+        socketClient.on("host-disconnected", (data) => {
             console.log("Host disconnected:", data)
             setConnectionStatus(`Host disconnected from room: ${data.room}`)
             setHostConnected(false)
@@ -109,14 +108,14 @@ function Client() {
         })
 
         // Listen for room expiration
-        socketClient.onControl("room-expired", (data) => {
+        socketClient.on("room-expired", (data) => {
             console.log("Room expired:", data)
             setConnectionStatus("Room expired due to inactivity")
             setHostConnected(false)
         })
 
         // Listen for screen size updates
-        socketClient.onControl("screen-size", (data) => {
+        socketClient.on("screen-size", (data) => {
             console.log("Screen size update:", data)
             setScreenSize({
                 width: data.width || 1280,
@@ -140,34 +139,39 @@ function Client() {
             }
         })
 
-        // Event listener for receiving screen data
-        const handleScreenData = (data) => {
+        // Listen for screen data
+        socketClient.on("screen-data", (data) => {
             if (data.code === code) {
                 const now = Date.now()
-                const timeSinceLastFrame = now - performanceRef.current.lastFrameTime
-                performanceRef.current.lastFrameTime = now
+                perfMetrics.current.frameTimings.push(now - perfMetrics.current.lastFrameTime)
+                perfMetrics.current.lastFrameTime = now
+                perfMetrics.current.framesReceived++
 
-                // Track frame timing for quality calculation
-                performanceRef.current.frameTimings.push(timeSinceLastFrame)
-                if (performanceRef.current.frameTimings.length > 10) {
-                    performanceRef.current.frameTimings.shift() // Keep only last 10 frames
+                // Keep only last 10 frame timings
+                if (perfMetrics.current.frameTimings.length > 10) {
+                    perfMetrics.current.frameTimings.shift()
                 }
 
-                // Count frames for FPS calculation
-                performanceRef.current.framesReceived++
+                // Update connection quality
+                if (perfMetrics.current.frameTimings.length >= 3) {
+                    const avgFrameTime =
+                        perfMetrics.current.frameTimings.reduce((a, b) => a + b, 0) / perfMetrics.current.frameTimings.length
 
-                // Calculate latency
-                const latency = now - Number.parseInt(data.timestamp, 10)
-                setNetworkStats((prev) => ({
-                    ...prev,
-                    latency,
-                }))
+                    let quality = "Unknown"
+                    if (avgFrameTime < 50) quality = "Excellent"
+                    else if (avgFrameTime < 100) quality = "Very Good"
+                    else if (avgFrameTime < 200) quality = "Good"
+                    else if (avgFrameTime < 500) quality = "Fair"
+                    else quality = "Poor"
+
+                    setConnectionQuality(quality)
+                }
 
                 // Acknowledge receipt
-                socketClient.emitScreen("screen-data-received", {
+                socketClient.emit("screen-data-received", {
                     frameId: data.frameId,
                     code: code,
-                    timestamp: now,
+                    timestamp: Date.now(),
                 })
 
                 setLastUpdate(new Date().toLocaleTimeString())
@@ -176,7 +180,7 @@ function Client() {
                 // Set the image source
                 imgRef.current.src = data.image
 
-                // Once the image is loaded, draw it to the canvas
+                // Draw to canvas once loaded
                 imgRef.current.onload = () => {
                     const canvas = canvasRef.current
                     if (canvas) {
@@ -186,19 +190,15 @@ function Client() {
                     }
                 }
 
-                // Handle image loading errors
                 imgRef.current.onerror = (err) => {
                     console.error("Error loading image:", err)
                     setError("Failed to load screen data")
                 }
             }
-        }
-
-        // Listen for 'screen-data' event
-        socketClient.onScreen("screen-data", handleScreenData)
+        })
 
         // Listen for cursor position updates
-        socketClient.onControl("cursor-position", (data) => {
+        socketClient.on("cursor-position", (data) => {
             if (cursorRef.current && canvasRef.current) {
                 const canvas = canvasRef.current
                 const rect = canvas.getBoundingClientRect()
@@ -211,44 +211,22 @@ function Client() {
             }
         })
 
-        // Set up network stats monitoring
+        // Calculate FPS and update stats
         const statsInterval = setInterval(() => {
             // Calculate FPS
             const now = Date.now()
-            const timeElapsed = (now - performanceRef.current.lastFpsCalc) / 1000 // in seconds
-            const fps = performanceRef.current.framesReceived / timeElapsed
+            const timeElapsed = (now - perfMetrics.current.lastFpsCalc) / 1000
+            const fps = perfMetrics.current.framesReceived / timeElapsed
 
             // Reset for next calculation
-            performanceRef.current.framesReceived = 0
-            performanceRef.current.lastFpsCalc = now
+            perfMetrics.current.framesReceived = 0
+            perfMetrics.current.lastFpsCalc = now
 
-            // Calculate average frame time
-            if (performanceRef.current.frameTimings.length > 0) {
-                const avgFrameTime =
-                    performanceRef.current.frameTimings.reduce((a, b) => a + b, 0) / performanceRef.current.frameTimings.length
-
-                // Determine connection quality
-                let quality = "Unknown"
-                if (avgFrameTime < 100) {
-                    quality = "Excellent"
-                } else if (avgFrameTime < 300) {
-                    quality = "Good"
-                } else if (avgFrameTime < 1000) {
-                    quality = "Fair"
-                } else {
-                    quality = "Poor"
-                }
-
-                setConnectionQuality(quality)
-                setNetworkStats((prev) => ({
-                    ...prev,
-                    fps: Math.round(fps * 10) / 10,
-                    quality,
-                }))
-            }
+            // Update FPS stats
+            console.log(`Current FPS: ${fps.toFixed(1)}`)
         }, 2000)
 
-        // Cleanup socket listener on unmount
+        // Cleanup on unmount
         return () => {
             socketClient.disconnect()
             clearInterval(statsInterval)
@@ -261,11 +239,14 @@ function Client() {
         }
     }, [code])
 
+    // Calculate mouse position with precise coordinate mapping
     const calculateMousePosition = (e) => {
         const canvas = canvasRef.current
         if (!canvas) return { x: 0, y: 0 }
 
         const rect = canvas.getBoundingClientRect()
+
+        // Calculate exact position with proper scaling
         const scaleX = canvas.width / rect.width
         const scaleY = canvas.height / rect.height
 
@@ -275,73 +256,166 @@ function Client() {
         }
     }
 
+    // Handle mouse movement
     const handleMouseMove = (e) => {
         if (!hostConnected) return
 
         const position = calculateMousePosition(e)
-        socketClient.emitControl("mouse-move", {
+
+        // Send mouse position to host
+        socketClient.emitVolatile("mouse-move", {
             code,
             x: position.x,
             y: position.y,
+            timestamp: Date.now(),
         })
+
+        // Update control stats
+        setControlStats((prev) => ({
+            ...prev,
+            mouse: prev.mouse + 1,
+        }))
     }
 
+    // Handle mouse click
     const handleMouseClick = (e) => {
         if (!hostConnected) return
         e.preventDefault()
 
         const position = calculateMousePosition(e)
-        socketClient.emitControl("mouse-click", {
+
+        // Send click event to host
+        socketClient.emit("mouse-click", {
             code,
             button: e.button, // 0 for left, 2 for right
             x: position.x,
             y: position.y,
+            timestamp: Date.now(),
+        })
+
+        // Make sure the canvas gets focus when clicked
+        if (canvasRef.current) {
+            canvasRef.current.focus()
+            canvasFocused.current = true
+        }
+    }
+
+    // Handle mouse double click
+    const handleDoubleClick = (e) => {
+        if (!hostConnected) return
+        e.preventDefault()
+
+        const position = calculateMousePosition(e)
+
+        // Send double-click event to host
+        socketClient.emit("mouse-double-click", {
+            code,
+            x: position.x,
+            y: position.y,
+            timestamp: Date.now(),
         })
     }
 
+    // Handle mouse wheel/scroll
+    const handleWheel = (e) => {
+        if (!hostConnected || !canvasFocused.current) return
+        e.preventDefault()
+
+        // Send scroll event to host
+        socketClient.emitVolatile("mouse-scroll", {
+            code,
+            deltaX: e.deltaX,
+            deltaY: e.deltaY,
+            deltaZ: e.deltaZ,
+            timestamp: Date.now(),
+        })
+    }
+
+    // Handle key down
     const handleKeyDown = (e) => {
         if (!hostConnected || !canvasFocused.current) return
 
-        // Prevent default browser actions for certain keys
-        if (["F5", "F11", "Tab"].includes(e.key)) {
+        // Skip if already pressed (prevent repeats)
+        if (keyStates.current[e.key]) return
+        keyStates.current[e.key] = true
+
+        // Prevent default browser actions for common keys
+        if (["F5", "F11", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
             e.preventDefault()
         }
 
-        socketClient.emitControl("key-press", {
+        // Send key down event to host
+        socketClient.emit("key-press", {
             code,
             key: e.key,
+            keyCode: e.keyCode,
             type: "down",
             shift: e.shiftKey,
             alt: e.altKey,
             ctrl: e.ctrlKey,
             meta: e.metaKey,
+            timestamp: Date.now(),
         })
+
+        // Update control stats
+        setControlStats((prev) => ({
+            ...prev,
+            keyboard: prev.keyboard + 1,
+        }))
     }
 
+    // Handle key up
     const handleKeyUp = (e) => {
         if (!hostConnected || !canvasFocused.current) return
 
-        socketClient.emitControl("key-press", {
+        // Clear key state
+        keyStates.current[e.key] = false
+
+        // Send key up event to host
+        socketClient.emit("key-press", {
             code,
             key: e.key,
+            keyCode: e.keyCode,
             type: "up",
             shift: e.shiftKey,
             alt: e.altKey,
             ctrl: e.ctrlKey,
             meta: e.metaKey,
+            timestamp: Date.now(),
         })
     }
 
+    // Handle canvas focus
     const handleCanvasFocus = () => {
+        console.log("Canvas focused")
         canvasFocused.current = true
     }
 
+    // Handle canvas blur
     const handleCanvasBlur = () => {
+        console.log("Canvas blurred")
         canvasFocused.current = false
+
+        // Release all pressed keys on blur
+        Object.keys(keyStates.current).forEach((key) => {
+            if (keyStates.current[key]) {
+                keyStates.current[key] = false
+                socketClient.emit("key-press", {
+                    code,
+                    key,
+                    type: "up",
+                    shift: false,
+                    alt: false,
+                    ctrl: false,
+                    meta: false,
+                    timestamp: Date.now(),
+                })
+            }
+        })
     }
 
+    // Add global keyboard event listeners
     useEffect(() => {
-        // Add global keyboard event listeners
         window.addEventListener("keydown", handleKeyDown)
         window.addEventListener("keyup", handleKeyUp)
 
@@ -366,17 +440,21 @@ function Client() {
 
                 {error && <div className="p-3 mb-4 bg-red-100 text-red-700 rounded-md">{error}</div>}
 
-                {/* Network stats */}
                 <div className="mb-4 p-2 bg-blue-50 rounded-md text-sm">
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="flex justify-between">
                         <div>
-                            <span className="font-medium">Latency:</span> {networkStats.latency}ms
+                            <span className="font-medium">Mouse events:</span> {controlStats.mouse}
                         </div>
                         <div>
-                            <span className="font-medium">FPS:</span> {networkStats.fps}
+                            <span className="font-medium">Keyboard events:</span> {controlStats.keyboard}
                         </div>
                         <div>
-                            <span className="font-medium">Quality:</span> {networkStats.quality}
+                            <button
+                                className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
+                                onClick={() => canvasRef.current?.focus()}
+                            >
+                                Focus Canvas
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -393,6 +471,8 @@ function Client() {
                         }}
                         onMouseMove={handleMouseMove}
                         onClick={handleMouseClick}
+                        onDoubleClick={handleDoubleClick}
+                        onWheel={handleWheel}
                         onContextMenu={(e) => {
                             e.preventDefault()
                             handleMouseClick({ ...e, button: 2 })
@@ -405,9 +485,15 @@ function Client() {
 
                 <div className="mt-4 p-3 bg-gray-100 rounded-md text-sm">
                     <p>
-                        Click on the screen to interact with the host computer. Press keys while the screen is focused to send
-                        keyboard input.
+                        <strong>Control Instructions:</strong>
                     </p>
+                    <ul className="list-disc pl-5 mt-1">
+                        <li>Click on the canvas to focus it and enable keyboard control</li>
+                        <li>Move your mouse over the canvas to control the remote cursor</li>
+                        <li>Left/right click to interact with the remote system</li>
+                        <li>Use scroll wheel to scroll on the remote system</li>
+                        <li>Type normally to send keystrokes to the remote system</li>
+                    </ul>
                 </div>
             </div>
         </div>

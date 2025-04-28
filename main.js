@@ -5,10 +5,10 @@ const { keyboard, mouse, Button, Point, screen: nutScreen, Key } = require("@nut
 
 let mainWindow = null
 
-// Configure nut.js settings for better performance
+// Configure nut.js settings for better performance and accuracy
 keyboard.config.autoDelayMs = 0
 mouse.config.autoDelayMs = 0
-mouse.config.mouseSpeed = 1000 // Faster mouse movement
+mouse.config.mouseSpeed = 2000 // Faster mouse movement for real-time feel
 
 // Map of modifier keys to track their state
 const modifierState = {
@@ -18,11 +18,65 @@ const modifierState = {
     meta: false,
 }
 
+// Advanced key mapping for special keys and combinations
+const keyMap = {
+    // Modifiers
+    Shift: Key.LeftShift,
+    Control: Key.LeftControl,
+    Alt: Key.LeftAlt,
+    Meta: Key.LeftSuper,
+
+    // Special keys
+    Enter: Key.Return,
+    Backspace: Key.Backspace,
+    Delete: Key.Delete,
+    Tab: Key.Tab,
+    Escape: Key.Escape,
+    ArrowUp: Key.Up,
+    ArrowDown: Key.Down,
+    ArrowLeft: Key.Left,
+    ArrowRight: Key.Right,
+    Home: Key.Home,
+    End: Key.End,
+    PageUp: Key.PageUp,
+    PageDown: Key.PageDown,
+    CapsLock: Key.CapsLock,
+    Insert: Key.Insert,
+    " ": Key.Space,
+    Space: Key.Space,
+
+    // Function keys
+    F1: Key.F1,
+    F2: Key.F2,
+    F3: Key.F3,
+    F4: Key.F4,
+    F5: Key.F5,
+    F6: Key.F6,
+    F7: Key.F7,
+    F8: Key.F8,
+    F9: Key.F9,
+    F10: Key.F10,
+    F11: Key.F11,
+    F12: Key.F12,
+
+    // Number keys
+    0: Key.Num0,
+    1: Key.Num1,
+    2: Key.Num2,
+    3: Key.Num3,
+    4: Key.Num4,
+    5: Key.Num5,
+    6: Key.Num6,
+    7: Key.Num7,
+    8: Key.Num8,
+    9: Key.Num9,
+}
+
 async function createWindow() {
     try {
         // Configure nut.js resource directory
-        const nutResources = path.join(__dirname, "node_modules", "@nut-tree-fork", "nut-js", "lib", "resources")
-        nutScreen.config.resourceDirectory = nutResources
+        const nutResources = path.join(__dirname, "..", "node_modules", "@nut-tree-fork", "nut-js", "lib", "resources");
+        nutScreen.config.resourceDirectory = nutResources;
 
         mainWindow = new BrowserWindow({
             width: 1400,
@@ -31,81 +85,84 @@ async function createWindow() {
                 contextIsolation: true,
                 nodeIntegration: false,
                 preload: path.join(__dirname, "preload.js"),
-                webSecurity: false,
+                webSecurity: false, // Required for cross-origin frames
                 allowRunningInsecureContent: true,
             },
-        })
+        });
 
         mainWindow.on("closed", () => {
-            mainWindow = null
-        })
+            mainWindow = null;
+        });
 
-        // Get screen sources handler
+        // Get screen sources handler for screen sharing
         ipcMain.handle("get-video-sources", async () => {
             try {
                 return await desktopCapturer.getSources({
                     types: ["screen", "window"],
                     thumbnailSize: { width: 150, height: 150 },
-                })
+                });
             } catch (error) {
-                console.error("Error getting video sources:", error)
-                return []
+                console.error("Error getting video sources:", error);
+                return [];
             }
-        })
+        });
 
-        // Get screen size handler
+        // Get accurate screen size for proper coordinate mapping
         ipcMain.handle("get-screen-size", () => {
-            const primaryDisplay = screen.getPrimaryDisplay()
+            const primaryDisplay = screen.getPrimaryDisplay();
             return {
                 width: primaryDisplay.size.width,
                 height: primaryDisplay.size.height,
-                scaleFactor: primaryDisplay.scaleFactor,
-            }
-        })
+                scaleFactor: primaryDisplay.scaleFactor
+            };
+        });
 
-        // Mouse movement handler with high priority
+        // Mouse movement handler with precise coordinate mapping
         ipcMain.on("mouse-move", async (_, data) => {
             try {
                 // Scale coordinates to actual screen size
-                const { x, y, screenWidth, screenHeight } = data
-                const primaryDisplay = screen.getPrimaryDisplay()
-                const actualWidth = primaryDisplay.size.width
-                const actualHeight = primaryDisplay.size.height
+                const { x, y, screenWidth, screenHeight } = data;
+                const primaryDisplay = screen.getPrimaryDisplay();
+                const actualWidth = primaryDisplay.size.width;
+                const actualHeight = primaryDisplay.size.height;
 
-                // Calculate the scaled position with precise pixel mapping
-                const scaledX = Math.floor((x / screenWidth) * actualWidth)
-                const scaledY = Math.floor((y / screenHeight) * actualHeight)
+                // Calculate precise scaled position
+                const scaledX = Math.round((x / screenWidth) * actualWidth);
+                const scaledY = Math.round((y / screenHeight) * actualHeight);
 
                 // Move the mouse to the calculated position
-                await mouse.move(new Point(scaledX, scaledY))
+                await mouse.move(new Point(scaledX, scaledY));
             } catch (error) {
-                console.error("Error moving mouse:", error)
+                console.error("Error moving mouse:", error);
             }
-        })
+        });
 
         // Mouse click handler
         ipcMain.on("mouse-click", async (_, data) => {
             try {
-                // Scale coordinates to actual screen size
-                const { x, y, button, screenWidth, screenHeight } = data
-                const primaryDisplay = screen.getPrimaryDisplay()
-                const actualWidth = primaryDisplay.size.width
-                const actualHeight = primaryDisplay.size.height
+                const { x, y, button, screenWidth, screenHeight } = data;
+                const primaryDisplay = screen.getPrimaryDisplay();
+                const actualWidth = primaryDisplay.size.width;
+                const actualHeight = primaryDisplay.size.height;
 
-                // Calculate the scaled position
-                const scaledX = Math.floor((x / screenWidth) * actualWidth)
-                const scaledY = Math.floor((y / screenHeight) * actualHeight)
+                // Calculate scaled position
+                const scaledX = Math.round((x / screenWidth) * actualWidth);
+                const scaledY = Math.round((y / screenHeight) * actualHeight);
 
                 // Move the mouse to the position first
-                await mouse.move(new Point(scaledX, scaledY))
+                await mouse.move(new Point(scaledX, scaledY));
 
-                // Perform the click
-                if (button === 2) {
-                    await mouse.click(Button.RIGHT)
-                } else if (button === 1) {
-                    await mouse.click(Button.MIDDLE)
-                } else {
-                    await mouse.click(Button.LEFT)
+                // Perform the click with the appropriate button
+                switch (button) {
+                    case 2:
+                        await mouse.click(Button.RIGHT);
+                        break;
+                    case 1:
+                        await mouse.click(Button.MIDDLE);
+                        break;
+                    default:
+                        await mouse.click(Button.LEFT);
+                        break;
                 }
             } catch (error) {
                 console.error("Error clicking mouse:", error)
