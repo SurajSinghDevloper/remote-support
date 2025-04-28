@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
-import socketClient from "../socket-client"
+import socketClient from "../socket"
 
 function Host() {
     const { code } = useParams()
